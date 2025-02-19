@@ -74,3 +74,20 @@ kernel void convolutionND(global const uchar* A, global uchar* B, constant float
 
 	B[id] = (uchar)result;
 }
+
+
+// invert image :D
+kernel void invert(global const int* A, global int* B){
+	int x = get_global_id(0);
+	int y = get_global_id(1);
+	int c = get_global_id(2);
+	
+	int w = get_global_size(0);
+	int h = get_global_size(1);
+	
+	int id = x + y * w + c * (w*h);
+	
+	B[id] = 255 - A[id];
+}
+
+

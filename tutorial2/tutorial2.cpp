@@ -72,7 +72,8 @@ int main(int argc, char **argv) {
 		}
 
 		//Part 4 - device operations
-
+		//cl::NDRange local_size(64); 
+		
 		//device - buffers
 		cl::Buffer dev_image_input(context, CL_MEM_READ_ONLY, image_input.size());
 		cl::Buffer dev_image_output(context, CL_MEM_READ_WRITE, image_input.size()); //should be the same as input image
@@ -83,7 +84,7 @@ int main(int argc, char **argv) {
 //		queue.enqueueWriteBuffer(dev_convolution_mask, CL_TRUE, 0, convolution_mask.size()*sizeof(float), &convolution_mask[0]);
 
 		//4.2 Setup and execute the kernel (i.e. device code)
-		cl::Kernel kernel = cl::Kernel(program, "identity");
+		cl::Kernel kernel = cl::Kernel(program, "invert");
 		kernel.setArg(0, dev_image_input);
 		kernel.setArg(1, dev_image_output);
 //		kernel.setArg(2, dev_convolution_mask);

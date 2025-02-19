@@ -84,6 +84,7 @@ int main(int argc, char **argv) {
 		kernel_mult.setArg(0, buffer_C);
 		kernel_mult.setArg(1, buffer_B);
 		kernel_mult.setArg(2, buffer_C);
+
 		
 		queue.enqueueNDRangeKernel(kernel_mult, cl::NullRange,
 		cl::NDRange(vector_elements), cl::NullRange);
@@ -91,7 +92,7 @@ int main(int argc, char **argv) {
 		cl::Event prof_event;
 		queue.enqueueNDRangeKernel(kernel_add, cl::NullRange,
 		cl::NDRange(vector_elements), cl::NullRange, NULL, &prof_event);
-
+		
 		//4.3 Copy the result from device to host
 		queue.enqueueReadBuffer(buffer_C, CL_TRUE, 0, vector_size, &C[0]);
 
