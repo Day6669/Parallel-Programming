@@ -91,3 +91,53 @@ kernel void invert(global const int* A, global int* B){
 }
 
 
+// populates histogram 
+kernel void createHist (global const uchar* A, global int* H) {
+	int id = get_global_id(0);
+	int index = A[id];
+	int ch = get_global_id(2);
+	
+	if (ch == 0) {
+		atomic_inc(&H[index]);
+	}
+}
+
+
+// blelloch scan
+kernel void blelloch(global int* H) {
+	int id = get_global_id(0);
+	int n = get_global_size(0);
+	int temp;
+	
+	if (id < 256){
+		for (int s=1; s<n; s*=2){
+			if (((id+1) % (s*2)) == 0) {
+				H[id] += H[id-s];
+			}
+			barrier(CLK_GLOBAL_MEM_FENCE);
+		}
+		
+		if (id == 0) { H[n-1] = 0; }
+		barrier (CLK_GLOBAL_MEM_FENCE);
+		
+		for (int s=n/2; s>0; s/=2) {
+			if (((id+1) % (s*2)) == 0) {
+				temp = H[id];
+				H[id] += H[id-s];
+				H[id-s] = temp;
+			}
+			barrier(CLK_GLOBAL_MEM_FENCE);
+		}
+	}
+}
+
+
+kernel void applyHistogram(global const uchar* A, global uchar* B, global int* H) {
+	int id = get_global_id(0);
+	int ch = get_global_id(2);
+	int i = A[id];
+	
+	if (ch == 0){
+		B[id] = H[i];
+	}
+}

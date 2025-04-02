@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
 	//Part 1 - handle command line options such as device selection, verbosity, etc.
 	int platform_id = 0;
 	int device_id = 0;
-	string image_filename = "test.ppm";
+	string image_filename = "test_large.ppm";
 
 	for (int i = 1; i < argc; i++) {
 		if ((strcmp(argv[i], "-p") == 0) && (i < (argc - 1))) { platform_id = atoi(argv[++i]); }
@@ -37,11 +37,12 @@ int main(int argc, char **argv) {
 	try {
 		CImg<unsigned char> image_input(image_filename.c_str());
 		CImgDisplay disp_input(image_input,"input");
-
-		//a 3x3 convolution mask implementing an averaging filter
-		std::vector<float> convolution_mask = { 1.f / 9, 1.f / 9, 1.f / 9,
-												1.f / 9, 1.f / 9, 1.f / 9,
-												1.f / 9, 1.f / 9, 1.f / 9 };
+		
+		std::vector<int> hist(1024); // make grow
+		for (int i=0; i<hist.size(); i++){
+			hist[i] = 0;
+		}
+		
 
 		//Part 3 - host operations
 		//3.1 Select computing devices
@@ -51,7 +52,7 @@ int main(int argc, char **argv) {
 		std::cout << "Runing on " << GetPlatformName(platform_id) << ", " << GetDeviceName(platform_id, device_id) << std::endl;
 
 		//create a queue to which we will push commands for the device
-		cl::CommandQueue queue(context);
+		cl::CommandQueue queue(context, CL_QUEUE_PROFILING_ENABLE);
 
 		//3.2 Load & build the device code
 		cl::Program::Sources sources;
@@ -72,30 +73,84 @@ int main(int argc, char **argv) {
 		}
 
 		//Part 4 - device operations
-		//cl::NDRange local_size(64); 
+		cl::Event t;
+		int total = 0;
+		int temp = 0;
+
 		
 		//device - buffers
 		cl::Buffer dev_image_input(context, CL_MEM_READ_ONLY, image_input.size());
-		cl::Buffer dev_image_output(context, CL_MEM_READ_WRITE, image_input.size()); //should be the same as input image
-//		cl::Buffer dev_convolution_mask(context, CL_MEM_READ_ONLY, convolution_mask.size()*sizeof(float));
-
+		cl::Buffer dev_image_output(context, CL_MEM_READ_WRITE, image_input.size()); 
+		
+		cl::Buffer histogram(context, CL_MEM_READ_WRITE, hist.size());
+		
 		//4.1 Copy images to device memory
 		queue.enqueueWriteBuffer(dev_image_input, CL_TRUE, 0, image_input.size(), &image_input.data()[0]);
-//		queue.enqueueWriteBuffer(dev_convolution_mask, CL_TRUE, 0, convolution_mask.size()*sizeof(float), &convolution_mask[0]);
-
-		//4.2 Setup and execute the kernel (i.e. device code)
-		cl::Kernel kernel = cl::Kernel(program, "invert");
-		kernel.setArg(0, dev_image_input);
-		kernel.setArg(1, dev_image_output);
-//		kernel.setArg(2, dev_convolution_mask);
-
-		queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(image_input.size()), cl::NullRange);
-
+		queue.enqueueWriteBuffer(histogram, CL_TRUE, 0, hist.size(), &hist.data()[0]);
+	
 		vector<unsigned char> output_buffer(image_input.size());
-		//4.3 Copy the result from device to host
+
+
+		//populates the histogram
+		cl::Kernel kernelH = cl::Kernel(program, "createHist");
+		kernelH.setArg(0, dev_image_input);
+		kernelH.setArg(1, histogram);
+
+		queue.enqueueNDRangeKernel(kernelH, cl::NullRange, cl::NDRange(image_input.size()), cl::NullRange, NULL, &t);
+		queue.enqueueReadBuffer(histogram, CL_TRUE, 0, hist.size(), &hist.data()[0]);
+		
+		temp = t.getProfilingInfo<CL_PROFILING_COMMAND_END>() - t.getProfilingInfo<CL_PROFILING_COMMAND_START>();
+		total += temp;
+		std::cout << "Histogram population: " << temp << endl;
+		
+		
+		
+		// blelloch scan
+		cl::Kernel kernelB = cl::Kernel(program, "blelloch");
+		kernelB.setArg(0, histogram);
+		
+		queue.enqueueNDRangeKernel(kernelB, cl::NullRange, cl::NDRange(hist.size()), cl::NullRange, NULL, &t);
+		queue.enqueueReadBuffer(histogram, CL_TRUE, 0, hist.size(), &hist[0]);
+		queue.enqueueWriteBuffer(histogram, CL_TRUE, 0, hist.size(), &hist.data()[0]);
+		
+		temp = t.getProfilingInfo<CL_PROFILING_COMMAND_END>() - t.getProfilingInfo<CL_PROFILING_COMMAND_START>();
+		total += temp;
+		std::cout << "Blelloch scan: " << temp << endl;
+		
+		
+		
+		// histogram normalization 
+		float scl = hist[255] / 512;
+		for (int i=0; i < hist.size(); i++){
+			hist[i] -= image_input.get_channel(0).size()* 3;
+			hist[i] /= scl;
+		}
+		queue.enqueueWriteBuffer(histogram, CL_TRUE, 0, hist.size(), &hist.data()[0]);
+		
+		
+		
+		// applies histogram to image
+		cl::Kernel kernelA = cl::Kernel(program, "applyHistogram");
+		kernelA.setArg(0, dev_image_input);
+		kernelA.setArg(1, dev_image_output);
+		kernelA.setArg(2, histogram);
+		
+		queue.enqueueNDRangeKernel(kernelA, cl::NullRange, cl::NDRange(image_input.size()), cl::NullRange, NULL, &t);
 		queue.enqueueReadBuffer(dev_image_output, CL_TRUE, 0, output_buffer.size(), &output_buffer.data()[0]);
+		
+		temp = t.getProfilingInfo<CL_PROFILING_COMMAND_END>() - t.getProfilingInfo<CL_PROFILING_COMMAND_START>();
+		total += temp;
+		std::cout << "Histogram application: " << temp << endl;
+		
+		std::cout << "Total Time (ns): " << total << endl;
+		
+		
+		
+		
 
 		CImg<unsigned char> output_image(output_buffer.data(), image_input.width(), image_input.height(), image_input.depth(), image_input.spectrum());
+		//output_image.YCbCrtoRGB();
+		
 		CImgDisplay disp_output(output_image,"output");
 
  		while (!disp_input.is_closed() && !disp_output.is_closed()
